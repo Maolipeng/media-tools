@@ -15,3 +15,5 @@ pnpm-debug.log*
 .env.production.local
 .vercel
 public/outputs
+data/artifacts
+data/state.json

@@ -5,6 +5,14 @@ import os from "os";
 import { callAiForCommand } from "@/lib/ai";
 import { buildArgs, validatePipeline } from "@/lib/validation";
 import { runCommand } from "@/lib/exec";
+import {
+  addMessage,
+  appendArtifact,
+  getArtifactById,
+  readState,
+  saveArtifact,
+  writeState
+} from "@/lib/storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,14 +39,13 @@ export async function POST(request: Request) {
     const baseUrl = formData.get("baseUrl");
     const model = formData.get("model");
     const files = formData.getAll("files");
+    const artifactIdsRaw = formData.get("artifactIds");
 
     if (typeof prompt !== "string" || !prompt.trim()) {
       return NextResponse.json({ error: "缺少处理描述。" }, { status: 400 });
     }
 
-    if (!files.length) {
-      return NextResponse.json({ error: "未上传文件。" }, { status: 400 });
-    }
+    let artifactIds = parseArtifactIds(artifactIdsRaw);
 
     const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "media-tools-"));
     const savedFiles: Array<{ id: string; name: string; type: string; path: string }> = [];
@@ -65,7 +72,21 @@ export async function POST(request: Request) {
     }
 
     if (!savedFiles.length) {
-      return NextResponse.json({ error: "未能保存上传文件。" }, { status: 400 });
+      if (!artifactIds.length) {
+        return NextResponse.json({ error: "未上传文件。" }, { status: 400 });
+      }
+    }
+
+    const state = await readState();
+    if (artifactIds.length === 0 && state.artifacts.length > 0) {
+      artifactIds = [state.artifacts[state.artifacts.length - 1].id];
+    }
+    const artifactFiles = artifactIds
+      .map((id) => getArtifactById(state, id))
+      .filter((artifact) => artifact !== null);
+
+    if (!savedFiles.length && artifactFiles.length === 0) {
+      return NextResponse.json({ error: "未找到可用的中间态文件。" }, { status: 400 });
     }
 
     console.log("[media-tools] saved files", savedFiles.map((file) => ({
@@ -76,7 +97,14 @@ export async function POST(request: Request) {
 
     const command = await callAiForCommand({
       prompt,
-      files: savedFiles.map(({ id, name, type }) => ({ id, name, type })),
+      files: [
+        ...savedFiles.map(({ id, name, type }) => ({ id, name, type })),
+        ...artifactFiles.map((artifact) => ({
+          id: artifact.id,
+          name: artifact.name,
+          type: artifact.contentType
+        }))
+      ],
       apiKey: typeof apiKey === "string" ? apiKey : undefined,
       baseUrl: typeof baseUrl === "string" ? baseUrl : undefined,
       model: typeof model === "string" ? model : undefined
@@ -84,7 +112,13 @@ export async function POST(request: Request) {
 
     console.log("[media-tools] ai command", command);
 
-    const validation = validatePipeline(command, new Set(savedFiles.map((f) => f.id)));
+    const validation = validatePipeline(
+      command,
+      new Set([
+        ...savedFiles.map((f) => f.id),
+        ...artifactFiles.flatMap((artifact) => [artifact.id, `artifact-${artifact.id}`])
+      ])
+    );
     if (!validation.ok) {
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
@@ -93,6 +127,10 @@ export async function POST(request: Request) {
       acc[file.id] = file.path;
       return acc;
     }, {});
+    for (const artifact of artifactFiles) {
+      inputPaths[artifact.id] = artifact.path;
+      inputPaths[`artifact-${artifact.id}`] = artifact.path;
+    }
 
     let finalOutputPath = "";
     let finalOutputName = "";
@@ -130,15 +168,57 @@ export async function POST(request: Request) {
     const outputExt = path.extname(finalOutputName).slice(1).toLowerCase();
     const contentType = CONTENT_TYPES[outputExt] ?? "application/octet-stream";
 
-    return new NextResponse(outputBuffer, {
-      headers: {
-        "Content-Type": contentType,
-        "Content-Disposition": `attachment; filename=\"${finalOutputName}\"`,
-        "X-Output-Filename": finalOutputName
-      }
+    const artifact = await saveArtifact({
+      buffer: outputBuffer,
+      ext: outputExt,
+      contentType,
+      name: finalOutputName
+    });
+
+    const userMessage = {
+      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      role: "user" as const,
+      content: prompt,
+      createdAt: new Date().toISOString(),
+      artifactIds
+    };
+
+    const assistantMessage = {
+      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      role: "assistant" as const,
+      content: `已生成：${artifact.name}`,
+      createdAt: new Date().toISOString(),
+      artifactIds: [artifact.id]
+    };
+
+    let nextState = await appendArtifact(state, artifact);
+    nextState = addMessage(nextState, userMessage);
+    nextState = addMessage(nextState, assistantMessage);
+    await writeState(nextState);
+
+    return NextResponse.json({
+      artifact: {
+        id: artifact.id,
+        name: artifact.name,
+        contentType: artifact.contentType,
+        size: artifact.size,
+        createdAt: artifact.createdAt
+      },
+      messages: nextState.messages
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "处理失败。";
     return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+function parseArtifactIds(value: FormDataEntryValue | null) {
+  if (!value || typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value) as string[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id) => typeof id === "string");
+  } catch {
+    return [];
   }
 }

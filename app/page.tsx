@@ -1,28 +1,51 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+type Artifact = {
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
+  createdAt: string;
+  url: string;
+};
+
+type Message = {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  createdAt: string;
+  artifactIds?: string[];
+};
+
+type PreviewItem = {
+  name: string;
+  type: string;
+  url: string;
+  index?: number;
+  artifactId?: string;
+};
 
 export default function Home() {
   const [prompt, setPrompt] = useState("");
   const [files, setFiles] = useState<File[]>([]);
-  const [status, setStatus] = useState<string | null>(null);
-  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
-  const [filename, setFilename] = useState<string | null>(null);
+  const [previews, setPreviews] = useState<
+    Array<{ name: string; type: string; url: string; index: number }>
+  >([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [selectedArtifactIds, setSelectedArtifactIds] = useState<string[]>([]);
+  const [selectionTouched, setSelectionTouched] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [activePreview, setActivePreview] = useState<PreviewItem | null>(null);
+
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("gpt-4o-mini");
   const [customModel, setCustomModel] = useState("");
   const [showSettings, setShowSettings] = useState(false);
-  const [previews, setPreviews] = useState<
-    Array<{ name: string; type: string; url: string; index: number }>
-  >([]);
-  const [activePreview, setActivePreview] = useState<{
-    name: string;
-    type: string;
-    url: string;
-    index: number;
-  } | null>(null);
 
   const modelOptions = [
     "gpt-4o-mini",
@@ -37,6 +60,12 @@ export default function Home() {
   ];
 
   const resolvedModel = model === "custom" ? customModel.trim() : model;
+
+  const artifactMap = useMemo(() => {
+    const map = new Map<string, Artifact>();
+    artifacts.forEach((artifact) => map.set(artifact.id, artifact));
+    return map;
+  }, [artifacts]);
 
   const persistSettings = (next: {
     apiKey: string;
@@ -68,8 +97,41 @@ export default function Home() {
     }
   };
 
+  const loadSession = async () => {
+    const response = await fetch("/api/session");
+    const data = await response.json();
+    const nextArtifacts = data.artifacts ?? [];
+    setArtifacts(nextArtifacts);
+    setMessages(data.messages ?? []);
+    setSelectedArtifactIds((prev) => {
+      const filtered = prev.filter((id) =>
+        nextArtifacts.some((artifact: Artifact) => artifact.id === id)
+      );
+      if (!selectionTouched && filtered.length === 0 && nextArtifacts.length > 0) {
+        return [nextArtifacts[nextArtifacts.length - 1].id];
+      }
+      return filtered;
+    });
+  };
+
+  const resetSession = async () => {
+    await fetch("/api/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "reset" })
+    });
+    setMessages([]);
+    setArtifacts([]);
+    setSelectedArtifactIds([]);
+    setFiles([]);
+    setPrompt("");
+    setStatus("已新建对话。");
+    setSelectionTouched(false);
+  };
+
   useEffect(() => {
     loadSettings();
+    loadSession();
   }, []);
 
   useEffect(() => {
@@ -94,11 +156,9 @@ export default function Home() {
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setStatus(null);
-    setDownloadUrl(null);
-    setFilename(null);
 
-    if (files.length === 0) {
-      setStatus("请先选择一个或多个媒体文件。");
+    if (files.length === 0 && selectedArtifactIds.length === 0) {
+      setStatus("请上传文件或选择一个中间态结果。");
       return;
     }
 
@@ -110,6 +170,7 @@ export default function Home() {
     const formData = new FormData();
     files.forEach((file) => formData.append("files", file));
     formData.append("prompt", prompt);
+    formData.append("artifactIds", JSON.stringify(selectedArtifactIds));
     if (apiKey.trim()) formData.append("apiKey", apiKey.trim());
     if (baseUrl.trim()) formData.append("baseUrl", baseUrl.trim());
     if (resolvedModel) formData.append("model", resolvedModel);
@@ -123,9 +184,11 @@ export default function Home() {
           type: file.type,
           size: file.size
         })),
+        artifactIds: selectedArtifactIds,
         baseUrl: baseUrl.trim() || "(env)",
         model: resolvedModel || "(env)"
       });
+
       const response = await fetch("/api/process", {
         method: "POST",
         body: formData
@@ -138,24 +201,15 @@ export default function Home() {
         return;
       }
 
-      const contentType = response.headers.get("content-type") ?? "";
-      if (contentType.includes("application/json")) {
-        const data = await response.json();
-        console.log("[media-tools] response json", data);
-        setStatus(data?.message ?? "处理成功。");
-        return;
+      const data = await response.json();
+      console.log("[media-tools] response json", data);
+      setStatus("处理完成，结果已保存到右侧列表。");
+      setPrompt("");
+      setFiles([]);
+      await loadSession();
+      if (data?.artifact?.id) {
+        setSelectedArtifactIds([data.artifact.id]);
       }
-
-      const blob = await response.blob();
-      console.log("[media-tools] response blob", {
-        size: blob.size,
-        type: blob.type
-      });
-      const download = URL.createObjectURL(blob);
-      const suggestedName = response.headers.get("x-output-filename");
-      setDownloadUrl(download);
-      setFilename(suggestedName || "output.bin");
-      setStatus("处理完成，点击下载结果。");
     } catch (error) {
       console.error("[media-tools] request error", error);
       setStatus("请求失败，请稍后再试。");
@@ -164,29 +218,98 @@ export default function Home() {
     }
   };
 
+  const toggleArtifactSelection = (id: string) => {
+    setSelectionTouched(true);
+    setSelectedArtifactIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
   return (
-    <main>
-      <section className="hero">
-        <h1>多媒体处理工作台</h1>
-        <p>
-          上传视频、图片或音频，用自然语言描述你的需求。系统会调用 AI
-          生成 FFmpeg、ImageMagick 或 SoX 命令并执行，将处理结果返回给你。
-        </p>
+    <main className="workspace">
+      <section className="chat-panel">
+        <header className="chat-header">
+          <div>
+            <h1>多媒体处理工作台</h1>
+            <p>像聊天一样描述处理需求，结果会保存为可继续处理的中间态。</p>
+          </div>
+          <div className="chat-header-actions">
+            <button type="button" className="secondary" onClick={resetSession}>
+              新建对话
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                setShowSettings(true);
+                loadSettings();
+              }}
+            >
+              设置
+            </button>
+          </div>
+        </header>
+
+        <div className="chat-messages">
+          {messages.length === 0 && (
+            <div className="chat-empty">还没有记录，先发送一条处理指令吧。</div>
+          )}
+          {messages.map((message) => (
+            <div key={message.id} className={`chat-bubble ${message.role}`}>
+              <div className="chat-content">{message.content}</div>
+              {message.artifactIds && message.artifactIds.length > 0 && (
+                <div className="chat-attachments">
+                  {message.artifactIds
+                    .map((artifactId) => artifactMap.get(artifactId))
+                    .filter(Boolean)
+                    .map((artifact) => (
+                      <button
+                        key={artifact!.id}
+                        type="button"
+                        className="chat-chip"
+                        onClick={() =>
+                          setActivePreview({
+                            name: artifact!.name,
+                            type: artifact!.contentType,
+                            url: artifact!.url,
+                            artifactId: artifact!.id
+                          })
+                        }
+                      >
+                        {artifact!.name}
+                      </button>
+                    ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <form className="chat-input" onSubmit={handleSubmit}>
+          <div className="chat-input-row">
+            <textarea
+              placeholder="描述下一步处理，例如：把上一步的结果裁成 720p，再压缩到 20MB"
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+            />
+            <button type="submit" disabled={isLoading}>
+              {isLoading ? "处理中..." : "发送"}
+            </button>
+          </div>
+          <div className="chat-actions">{status && <span className="chat-status">{status}</span>}</div>
+        </form>
       </section>
 
-      <section className="panel">
-        <form className="form-grid" onSubmit={handleSubmit}>
-          <button
-            type="button"
-            onClick={() => {
-              setShowSettings(true);
-              loadSettings();
-            }}
-          >
-            打开设置
-          </button>
-          <div>
-            <label htmlFor="files">上传媒体文件（支持多选）</label>
+      <aside className="side-panel">
+        <section className="panel-block">
+          <header className="panel-header">
+            <h2>上传与预览</h2>
+            <span className="panel-hint">支持多次选择追加</span>
+          </header>
+          <div className="panel-body">
+            <label htmlFor="files" className="file-label">
+              选择媒体文件
+            </label>
             <input
               id="files"
               type="file"
@@ -200,94 +323,30 @@ export default function Home() {
                 event.target.value = "";
               }}
             />
-          </div>
 
-          {previews.length > 0 && (
-            <div className="preview-grid">
-              {previews.map((preview) => {
-                if (preview.type.startsWith("image/")) {
-                  return (
-                    <div key={preview.url} className="preview-card">
-                      <button
-                        type="button"
-                        className="preview-thumb"
-                        onClick={() => setActivePreview(preview)}
-                      >
-                        <img src={preview.url} alt={preview.name} />
-                      </button>
-                      <div className="preview-caption">{preview.name}</div>
-                      <button
-                        type="button"
-                        className="preview-remove"
-                        onClick={() => {
-                          setFiles((prev) => prev.filter((_, idx) => idx !== preview.index));
-                          setActivePreview(null);
-                        }}
-                      >
-                        移除
-                      </button>
-                    </div>
-                  );
-                }
-
-                if (preview.type.startsWith("video/")) {
-                  return (
-                    <div key={preview.url} className="preview-card">
-                      <button
-                        type="button"
-                        className="preview-thumb"
-                        onClick={() => setActivePreview(preview)}
-                      >
-                        <video src={preview.url} muted playsInline />
-                      </button>
-                      <div className="preview-caption">{preview.name}</div>
-                      <button
-                        type="button"
-                        className="preview-remove"
-                        onClick={() => {
-                          setFiles((prev) => prev.filter((_, idx) => idx !== preview.index));
-                          setActivePreview(null);
-                        }}
-                      >
-                        移除
-                      </button>
-                    </div>
-                  );
-                }
-
-                if (preview.type.startsWith("audio/")) {
-                  return (
-                    <div key={preview.url} className="preview-card preview-audio">
-                      <button
-                        type="button"
-                        className="preview-thumb"
-                        onClick={() => setActivePreview(preview)}
-                      >
-                        <div className="preview-audio-icon">音频</div>
-                      </button>
-                      <div className="preview-caption">{preview.name}</div>
-                      <button
-                        type="button"
-                        className="preview-remove"
-                        onClick={() => {
-                          setFiles((prev) => prev.filter((_, idx) => idx !== preview.index));
-                          setActivePreview(null);
-                        }}
-                      >
-                        移除
-                      </button>
-                    </div>
-                  );
-                }
-
-                return (
+            {previews.length > 0 && (
+              <div className="preview-grid">
+                {previews.map((preview) => (
                   <div key={preview.url} className="preview-card">
                     <button
                       type="button"
                       className="preview-thumb"
                       onClick={() => setActivePreview(preview)}
                     >
-                      <div className="preview-file">文件</div>
+                      {preview.type.startsWith("image/") && (
+                        <img src={preview.url} alt={preview.name} />
+                      )}
+                      {preview.type.startsWith("video/") && (
+                        <video src={preview.url} muted playsInline />
+                      )}
+                      {preview.type.startsWith("audio/") && (
+                        <div className="preview-audio-icon">音频</div>
+                      )}
+                      {!preview.type.startsWith("image/") &&
+                        !preview.type.startsWith("video/") &&
+                        !preview.type.startsWith("audio/") && (
+                          <div className="preview-file">文件</div>
+                        )}
                     </button>
                     <div className="preview-caption">{preview.name}</div>
                     <button
@@ -301,42 +360,66 @@ export default function Home() {
                       移除
                     </button>
                   </div>
-                );
-              })}
-            </div>
-          )}
-
-          <div>
-            <label htmlFor="prompt">操作描述</label>
-            <textarea
-              id="prompt"
-              placeholder="例如：把视频剪成 15 秒、压缩为 720p，并提取音频。"
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-            />
-          </div>
-
-
-          <button type="submit" disabled={isLoading}>
-            {isLoading ? "处理中..." : "开始处理"}
-          </button>
-
-          <p className="notice">
-            提示：请确保服务器已安装 FFmpeg、ImageMagick、SoX。设置会保存在浏览器本地。
-          </p>
-        </form>
-
-        {(status || downloadUrl) && (
-          <div className="output">
-            {status && <div>{status}</div>}
-            {downloadUrl && (
-              <a href={downloadUrl} download={filename ?? undefined}>
-                下载结果：{filename}
-              </a>
+                ))}
+              </div>
             )}
           </div>
-        )}
-      </section>
+        </section>
+
+        <section className="panel-block">
+          <header className="panel-header">
+            <h2>处理中间态</h2>
+            <span className="panel-hint">最多保留 10 个结果</span>
+          </header>
+          <div className="panel-body">
+            {artifacts.length === 0 && (
+              <div className="panel-empty">暂无结果，先完成一次处理。</div>
+            )}
+            <div className="preview-grid">
+              {artifacts.map((artifact) => (
+                <div key={artifact.id} className="preview-card">
+                  <button
+                    type="button"
+                    className="preview-thumb"
+                    onClick={() =>
+                      setActivePreview({
+                        name: artifact.name,
+                        type: artifact.contentType,
+                        url: artifact.url,
+                        artifactId: artifact.id
+                      })
+                    }
+                  >
+                    {artifact.contentType.startsWith("image/") && (
+                      <img src={artifact.url} alt={artifact.name} />
+                    )}
+                    {artifact.contentType.startsWith("video/") && (
+                      <video src={artifact.url} muted playsInline />
+                    )}
+                    {artifact.contentType.startsWith("audio/") && (
+                      <div className="preview-audio-icon">音频</div>
+                    )}
+                    {!artifact.contentType.startsWith("image/") &&
+                      !artifact.contentType.startsWith("video/") &&
+                      !artifact.contentType.startsWith("audio/") && (
+                        <div className="preview-file">文件</div>
+                      )}
+                  </button>
+                  <div className="preview-caption">{artifact.name}</div>
+                  <label className="preview-select">
+                    <input
+                      type="checkbox"
+                      checked={selectedArtifactIds.includes(artifact.id)}
+                      onChange={() => toggleArtifactSelection(artifact.id)}
+                    />
+                    用于下一步
+                  </label>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      </aside>
 
       {showSettings && (
         <div

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Artifact = {
   id: string;
@@ -46,6 +46,12 @@ export default function Home() {
   const [model, setModel] = useState("gpt-4o-mini");
   const [customModel, setCustomModel] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [appendMode, setAppendMode] = useState(false);
+  const [customTemplates, setCustomTemplates] = useState<
+    Array<{ title: string; text: string }>
+  >([]);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const modelOptions = [
     "gpt-4o-mini",
@@ -57,6 +63,33 @@ export default function Home() {
     "deepseek-reasoner",
     "qwen2.5-72b",
     "custom"
+  ];
+
+  const promptTemplates = [
+    {
+      title: "电影感字幕",
+      text: "给视频添加中文字幕“在路上”，使用电影感大字，白字黑描边，底部居中，轻微淡入淡出。"
+    },
+    {
+      title: "霓虹弹跳字幕",
+      text: "给视频添加字幕“哈哈哈哈哈”，霓虹发光效果，弹跳入场，停留 2 秒后淡出。"
+    },
+    {
+      title: "卡拉OK高亮",
+      text: "为视频添加逐字高亮字幕，使用 PingFang SC 字体，黄色高亮，底部居中。"
+    },
+    {
+      title: "压缩到 20MB",
+      text: "将视频压缩到 720p，码率控制在 2Mbps 左右，文件尽量控制在 20MB 以内。"
+    },
+    {
+      title: "裁切竖屏",
+      text: "将视频裁切为 9:16 竖屏，主体居中，导出为 mp4。"
+    },
+    {
+      title: "视频合并",
+      text: "把两个视频按顺序合并成一个，保证分辨率一致，并保留音频。"
+    }
   ];
 
   const resolvedModel = model === "custom" ? customModel.trim() : model;
@@ -97,6 +130,88 @@ export default function Home() {
     }
   };
 
+  const loadTemplates = () => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem("media-tools-templates");
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as Array<{ title: string; text: string }>;
+      if (Array.isArray(parsed)) {
+        setCustomTemplates(parsed);
+      }
+    } catch {
+      // ignore invalid templates
+    }
+  };
+
+  const saveTemplates = (next: Array<{ title: string; text: string }>) => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("media-tools-templates", JSON.stringify(next));
+  };
+
+  const handleTemplateClick = (text: string) => {
+    if (appendMode && prompt.trim()) {
+      setPrompt((prev) => `${prev}\n${text}`);
+    } else {
+      setPrompt(text);
+    }
+  };
+
+  const handleSaveTemplate = () => {
+    const trimmed = prompt.trim();
+    if (!trimmed) {
+      setStatus("请输入内容后再保存模板。");
+      return;
+    }
+    const title = trimmed.length > 12 ? `${trimmed.slice(0, 12)}...` : trimmed;
+    const next = [{ title, text: trimmed }, ...customTemplates].slice(0, 8);
+    setCustomTemplates(next);
+    saveTemplates(next);
+    setStatus("已保存为模板。");
+  };
+
+  const handleExportTemplates = () => {
+    const payload = JSON.stringify(customTemplates, null, 2);
+    const blob = new Blob([payload], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "media-tools-templates.json";
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportTemplates = async (file: File | null) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as Array<{ title: string; text: string }>;
+      if (!Array.isArray(parsed)) {
+        setStatus("模板文件格式不正确。");
+        return;
+      }
+      const sanitized = parsed
+        .filter((item) => item && typeof item.title === "string" && typeof item.text === "string")
+        .slice(0, 20);
+      setCustomTemplates(sanitized);
+      saveTemplates(sanitized);
+      setStatus("已导入模板。");
+    } catch {
+      setStatus("模板导入失败，请检查文件内容。");
+    }
+  };
+
+  const moveTemplate = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return;
+    setCustomTemplates((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      saveTemplates(next);
+      return next;
+    });
+  };
+
   const loadSession = async () => {
     const response = await fetch("/api/session");
     const data = await response.json();
@@ -131,6 +246,7 @@ export default function Home() {
 
   useEffect(() => {
     loadSettings();
+    loadTemplates();
     loadSession();
   }, []);
 
@@ -286,6 +402,103 @@ export default function Home() {
         </div>
 
         <form className="chat-input" onSubmit={handleSubmit}>
+          <div className="template-bar">
+            <div className="template-title-row">
+              <div className="template-title">常用模板</div>
+              <label className="template-toggle">
+                <input
+                  type="checkbox"
+                  checked={appendMode}
+                  onChange={(event) => setAppendMode(event.target.checked)}
+                />
+                追加模式
+              </label>
+            </div>
+            <div className="template-list">
+              {promptTemplates.map((item) => (
+                <button
+                  key={item.title}
+                  type="button"
+                  className="template-chip"
+                  onClick={() => handleTemplateClick(item.text)}
+                >
+                  {item.title}
+                </button>
+              ))}
+            </div>
+            {customTemplates.length > 0 && (
+              <>
+                <div className="template-title-row">
+                  <div className="template-title">我的模板</div>
+                  <div className="template-actions">
+                    <button
+                      type="button"
+                      className="template-action"
+                      onClick={handleExportTemplates}
+                    >
+                      导出
+                    </button>
+                    <button
+                      type="button"
+                      className="template-action"
+                      onClick={() => importInputRef.current?.click()}
+                    >
+                      导入
+                    </button>
+                    <input
+                      ref={importInputRef}
+                      type="file"
+                      accept="application/json"
+                      className="template-import"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0] ?? null;
+                        void handleImportTemplates(file);
+                        event.target.value = "";
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="template-list">
+                  {customTemplates.map((item, index) => (
+                    <div
+                      key={`${item.title}-${index}`}
+                      className="template-item"
+                      draggable
+                      onDragStart={() => setDragIndex(index)}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                      }}
+                      onDrop={() => {
+                        if (dragIndex === null) return;
+                        moveTemplate(dragIndex, index);
+                        setDragIndex(null);
+                      }}
+                      onDragEnd={() => setDragIndex(null)}
+                    >
+                      <button
+                        type="button"
+                        className="template-chip"
+                        onClick={() => handleTemplateClick(item.text)}
+                      >
+                        {item.title}
+                      </button>
+                      <button
+                        type="button"
+                        className="template-remove"
+                        onClick={() => {
+                          const next = customTemplates.filter((_, i) => i !== index);
+                          setCustomTemplates(next);
+                          saveTemplates(next);
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
           <div className="chat-input-row">
             <textarea
               placeholder="描述下一步处理，例如：把上一步的结果裁成 720p，再压缩到 20MB"
@@ -296,7 +509,12 @@ export default function Home() {
               {isLoading ? "处理中..." : "发送"}
             </button>
           </div>
-          <div className="chat-actions">{status && <span className="chat-status">{status}</span>}</div>
+          <div className="chat-actions">
+            {status && <span className="chat-status">{status}</span>}
+            <button type="button" className="secondary" onClick={handleSaveTemplate}>
+              保存为模板
+            </button>
+          </div>
         </form>
       </section>
 

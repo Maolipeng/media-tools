@@ -229,6 +229,88 @@ button.secondary {
   gap: 10px;
 }
 
+.template-bar {
+  display: grid;
+  gap: 8px;
+}
+
+.template-title {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.template-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.template-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.template-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.template-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: grab;
+}
+
+.template-chip {
+  background: rgba(148, 163, 184, 0.2);
+  color: var(--text);
+  border: none;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.template-chip:hover {
+  box-shadow: 0 8px 20px rgba(34, 211, 238, 0.2);
+}
+
+.template-remove {
+  background: rgba(148, 163, 184, 0.2);
+  color: var(--text);
+  border: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  line-height: 22px;
+  text-align: center;
+  padding: 0;
+}
+
+.template-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.template-action {
+  background: rgba(148, 163, 184, 0.2);
+  color: var(--text);
+  border: none;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+}
+
+.template-import {
+  display: none;
+}
+
 .chat-input-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

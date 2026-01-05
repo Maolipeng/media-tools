@@ -30,6 +30,7 @@ type PreviewItem = {
 export default function Home() {
   const [prompt, setPrompt] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [fileAliases, setFileAliases] = useState<string[]>([]);
   const [previews, setPreviews] = useState<
     Array<{ name: string; type: string; url: string; index: number }>
   >([]);
@@ -157,6 +158,11 @@ export default function Home() {
     }
   };
 
+  const normalizeAlias = (value: string) => {
+    const cleaned = value.replace(/\s+/g, "-").replace(/[^\p{L}0-9_-]/gu, "");
+    return cleaned.slice(0, 32);
+  };
+
   const handleSaveTemplate = () => {
     const trimmed = prompt.trim();
     if (!trimmed) {
@@ -239,6 +245,7 @@ export default function Home() {
     setArtifacts([]);
     setSelectedArtifactIds([]);
     setFiles([]);
+    setFileAliases([]);
     setPrompt("");
     setStatus("已新建对话。");
     setSelectionTouched(false);
@@ -285,6 +292,10 @@ export default function Home() {
 
     const formData = new FormData();
     files.forEach((file) => formData.append("files", file));
+    formData.append(
+      "aliases",
+      JSON.stringify(fileAliases.map((alias) => alias.trim()))
+    );
     formData.append("prompt", prompt);
     formData.append("artifactIds", JSON.stringify(selectedArtifactIds));
     if (apiKey.trim()) formData.append("apiKey", apiKey.trim());
@@ -300,6 +311,7 @@ export default function Home() {
           type: file.type,
           size: file.size
         })),
+        aliases: fileAliases,
         artifactIds: selectedArtifactIds,
         baseUrl: baseUrl.trim() || "(env)",
         model: resolvedModel || "(env)"
@@ -528,6 +540,7 @@ export default function Home() {
             <label htmlFor="files" className="file-label">
               选择媒体文件
             </label>
+            <div className="panel-note">可为素材设置代号，例如 main、clip2、cover。</div>
             <input
               id="files"
               type="file"
@@ -537,6 +550,10 @@ export default function Home() {
                 const nextFiles = Array.from(event.target.files ?? []);
                 if (nextFiles.length > 0) {
                   setFiles((prev) => [...prev, ...nextFiles]);
+                  setFileAliases((prev) => [
+                    ...prev,
+                    ...nextFiles.map(() => "")
+                  ]);
                 }
                 event.target.value = "";
               }}
@@ -567,11 +584,27 @@ export default function Home() {
                         )}
                     </button>
                     <div className="preview-caption">{preview.name}</div>
+                    <input
+                      className="preview-alias"
+                      placeholder="素材代号（如 main）"
+                      value={fileAliases[preview.index] ?? ""}
+                      onChange={(event) => {
+                        const next = normalizeAlias(event.target.value);
+                        setFileAliases((prev) => {
+                          const updated = [...prev];
+                          updated[preview.index] = next;
+                          return updated;
+                        });
+                      }}
+                    />
                     <button
                       type="button"
                       className="preview-remove"
                       onClick={() => {
                         setFiles((prev) => prev.filter((_, idx) => idx !== preview.index));
+                        setFileAliases((prev) =>
+                          prev.filter((_, idx) => idx !== preview.index)
+                        );
                         setActivePreview(null);
                       }}
                     >

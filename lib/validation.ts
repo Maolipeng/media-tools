@@ -2,8 +2,8 @@ import type { PipelineCommand, PipelineStep } from "./ai";
 
 const ALLOWED_TOOLS = new Set(["ffmpeg", "magick", "sox"]);
 const FORBIDDEN_TOKENS = /[\n\r]/;
-const INPUT_PLACEHOLDER = /\{input:([a-z0-9-]+)\}/gi;
-const INPUT_PLACEHOLDER_EXACT = /^\{input:([a-z0-9-]+)\}$/i;
+const INPUT_PLACEHOLDER = /\{input:([\p{L}0-9_-]+)\}/giu;
+const INPUT_PLACEHOLDER_EXACT = /^\{input:([\p{L}0-9_-]+)\}$/iu;
 
 export function validatePipeline(
   command: PipelineCommand,
@@ -35,21 +35,25 @@ export function buildArgs(
   outputPath: string
 ) {
   return command.args.map((arg) => {
-    if (arg === "{output}") return outputPath;
-    if (arg === "{input}") {
+    let next = arg;
+    if (next.includes("{output}")) {
+      next = next.replaceAll("{output}", outputPath);
+    }
+
+    if (next.includes("{input}")) {
       if (command.inputFileId && inputPaths[command.inputFileId]) {
-        return inputPaths[command.inputFileId];
+        next = next.replaceAll("{input}", inputPaths[command.inputFileId]);
       }
-      return arg;
     }
 
-    const match = arg.match(INPUT_PLACEHOLDER_EXACT);
-    if (match) {
-      const fileId = match[1];
-      return inputPaths[fileId] ?? arg;
+    const placeholderRegex = /\{input:([\p{L}0-9_-]+)\}/giu;
+    if (placeholderRegex.test(next)) {
+      next = next.replace(placeholderRegex, (_match, id: string) => {
+        return inputPaths[id] ?? _match;
+      });
     }
 
-    return arg;
+    return next;
   });
 }
 

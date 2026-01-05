@@ -39,6 +39,7 @@ export async function POST(request: Request) {
     const baseUrl = formData.get("baseUrl");
     const model = formData.get("model");
     const files = formData.getAll("files");
+    const aliasesRaw = formData.get("aliases");
     const artifactIdsRaw = formData.get("artifactIds");
 
     if (typeof prompt !== "string" || !prompt.trim()) {
@@ -46,9 +47,13 @@ export async function POST(request: Request) {
     }
 
     let artifactIds = parseArtifactIds(artifactIdsRaw);
+    const aliases = parseAliases(aliasesRaw);
 
     const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "media-tools-"));
     const savedFiles: Array<{ id: string; name: string; type: string; path: string }> = [];
+    const aliasMap = new Map<string, string>();
+    const aliasByFileId = new Map<string, string>();
+    const aliasSet = new Set<string>();
 
     for (let index = 0; index < files.length; index += 1) {
       const file = files[index];
@@ -69,6 +74,23 @@ export async function POST(request: Request) {
         type: file.type || "application/octet-stream",
         path: filePath
       });
+
+      const aliasRaw = aliases[index];
+      if (typeof aliasRaw === "string" && aliasRaw.trim()) {
+        const alias = normalizeAlias(aliasRaw);
+        if (!alias) {
+          return NextResponse.json({ error: `素材代号不合法：${aliasRaw}` }, { status: 400 });
+        }
+        if (isReservedAlias(alias)) {
+          return NextResponse.json({ error: `素材代号不可用：${alias}` }, { status: 400 });
+        }
+        if (aliasSet.has(alias)) {
+          return NextResponse.json({ error: `素材代号重复：${alias}` }, { status: 400 });
+        }
+        aliasSet.add(alias);
+        aliasMap.set(alias, fileId);
+        aliasByFileId.set(fileId, alias);
+      }
     }
 
     if (!savedFiles.length) {
@@ -98,7 +120,12 @@ export async function POST(request: Request) {
     const command = await callAiForCommand({
       prompt,
       files: [
-        ...savedFiles.map(({ id, name, type }) => ({ id, name, type })),
+        ...savedFiles.map(({ id, name, type }) => ({
+          id,
+          name,
+          type,
+          alias: aliasByFileId.get(id)
+        })),
         ...artifactFiles.map((artifact) => ({
           id: artifact.id,
           name: artifact.name,
@@ -116,6 +143,7 @@ export async function POST(request: Request) {
       command,
       new Set([
         ...savedFiles.map((f) => f.id),
+        ...aliasMap.keys(),
         ...artifactFiles.flatMap((artifact) => [artifact.id, `artifact-${artifact.id}`])
       ])
     );
@@ -127,6 +155,9 @@ export async function POST(request: Request) {
       acc[file.id] = file.path;
       return acc;
     }, {});
+    for (const [alias, fileId] of aliasMap.entries()) {
+      inputPaths[alias] = inputPaths[fileId];
+    }
     for (const artifact of artifactFiles) {
       inputPaths[artifact.id] = artifact.path;
       inputPaths[`artifact-${artifact.id}`] = artifact.path;
@@ -221,4 +252,30 @@ function parseArtifactIds(value: FormDataEntryValue | null) {
   } catch {
     return [];
   }
+}
+
+function parseAliases(value: FormDataEntryValue | null) {
+  if (!value || typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value) as Array<string | null>;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((item) => (typeof item === "string" ? item : ""));
+  } catch {
+    return [];
+  }
+}
+
+function normalizeAlias(raw: string) {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  const cleaned = trimmed.replace(/\s+/g, "-");
+  if (!/^[\p{L}0-9_-]{1,32}$/u.test(cleaned)) return "";
+  return cleaned;
+}
+
+function isReservedAlias(alias: string) {
+  if (/^file-\d+$/i.test(alias)) return true;
+  if (/^step-\d+$/i.test(alias)) return true;
+  if (/^artifact-/i.test(alias)) return true;
+  return false;
 }

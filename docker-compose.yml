@@ -1,0 +1,12 @@
+version: "3.9"
+services:
+  media-tools:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_BASE_URL: ${AI_BASE_URL:-}
+      AI_MODEL: ${AI_MODEL:-}
+    volumes:
+      - ./data:/app/data

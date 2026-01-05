@@ -76,6 +76,9 @@ function buildCommandError(tool: string, stderr: string, code: number | null) {
     if (message.includes("Error reinitializing filters")) {
       return "FFmpeg 滤镜链配置失败，请检查 concat 前的统一参数设置。";
     }
+    if (message.includes("colorchannelmixer") && message.includes("out of range")) {
+      return "FFmpeg colorchannelmixer 参数超出范围，请将 rr/gg/bb/aa 等系数限制在 -2 到 2。";
+    }
     if (message.includes("Invalid argument")) {
       return "FFmpeg 参数不合法，请检查生成的命令参数。";
     }

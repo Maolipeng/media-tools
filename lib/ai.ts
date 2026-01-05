@@ -11,7 +11,28 @@ export type PipelineCommand = {
   steps: PipelineStep[];
 };
 
+import fs from "fs";
+import path from "path";
+
 const DEFAULT_MODEL = "gpt-4o-mini";
+const DEFAULT_FONTFILE = resolveDefaultFontFile();
+
+function resolveDefaultFontFile() {
+  const home = process.env.HOME || "";
+  const candidates = [
+    process.env.AI_FONTFILE,
+    "/usr/share/fonts/opentype/noto/NotoSansSC-Regular.otf",
+    home ? path.join(home, "Library/Fonts/NotoSansCJK.ttc") : "",
+    "/Library/Fonts/NotoSansCJK.ttc",
+    "/System/Library/Fonts/Supplemental/Songti.ttc"
+  ].filter((value): value is string => Boolean(value));
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  return "";
+}
 
 export async function callAiForCommand(options: {
   prompt: string;
@@ -34,6 +55,10 @@ export async function callAiForCommand(options: {
     .map((file) => file.alias?.trim())
     .filter((alias): alias is string => Boolean(alias));
   const availableIds = [...new Set([...fileIds, ...aliasIds])].join(", ");
+  const fontHint = DEFAULT_FONTFILE
+    ? `优先使用 fontfile='${DEFAULT_FONTFILE}'（可通过 AI_FONTFILE 覆盖）`
+    : "优先使用可用中文字体（如 Noto Sans CJK SC 或 PingFang SC），确保字体可被系统识别";
+
   const system = `你是多媒体命令生成器。仅输出 JSON，遵循以下 schema：\n` +
     `{"steps":[{"tool":"ffmpeg|magick|sox","args":["..."],"inputFileIds":["file-1"],"outputExt":"..."}]}\n` +
     `要求：\n` +
@@ -44,15 +69,17 @@ export async function callAiForCommand(options: {
     `5) outputExt 必须是合理的扩展名，如 mp4, mp3, wav, png, jpg 等。\n` +
     `6) 只能使用提供的文件 id 或已生成的 step id。\n` +
     `7) 如果需要拼接/合并视频（concat），必须先统一分辨率、像素比例、帧率与音频采样率（例如 scale+pad+fps+setsar+aresample），否则会报错。\n` +
-    `8) 如果需要添加字幕/文字（含中文），优先使用 FFmpeg drawtext 并指定 UTF-8 与字体名称（如 font='WenQuanYi Zen Hei' 或 font='WenQuanYi Micro Hei' 或 font='Noto Sans CJK SC'），确保不乱码；若使用字幕文件，请加 -sub_charenc UTF-8。\n` +
+    `8) 如果需要添加字幕/文字（含中文），必须使用 FFmpeg drawtext 并指定 UTF-8 与 fontfile，避免字体名缺失导致乱码；${fontHint}；不要只用 font=，如需 font= 也必须同时设置 fontfile=；若使用字幕文件，请加 -sub_charenc UTF-8。\n` +
     `9) 若需要音视频拼接或复杂滤镜，请明确分离视频链与音频链（视频链仅含 scale/pad/fps/setsar，音频链仅含 aresample），concat 使用 [v0][a0][v1][a1] 这类映射，避免将视频滤镜输出接到音频滤镜输入。\n` +
     `10) 若需要设置封面图（attached_pic），请使用额外输入并在输出时 map，不要将封面图加入 filter_complex。\n` +
     `11) 拼接前请统一 SAR（像素比例），视频链中添加 setsar=1，避免 concat 报错。\n` +
     `12) 输出视频请设置像素格式 yuv420p，输出音频优先 AAC 48kHz 立体声。\n` +
     `13) 避免使用可能缺失的 FFmpeg 滤镜（如 glow），发光效果优先用 drawtext + gblur/boxblur + colorchannelmixer 实现。\n` +
-    `14) ImageMagick/SoX 命令也必须使用 {input:...} 与 {output}，不要使用绝对路径或相对路径跳转（如 ../）。\n` +
-    `15) 若用户为素材设置了代号，可用 {input:alias} 引用该素材。\n` +
-    `16) 可用文件 id 列表：${availableIds}`;
+    `14) 发光/模糊只能作用于文字层：用 color/transparent 生成透明画布，drawtext 输出文字层，再 gblur/boxblur，最后 overlay 到原视频；不要对整段视频直接 gblur/boxblur。\n` +
+    `15) colorchannelmixer 的 rr/gg/bb/aa 等系数必须在 [-2, 2] 范围内，避免超出导致报错。\n` +
+    `16) ImageMagick/SoX 命令也必须使用 {input:...} 与 {output}，不要使用绝对路径或相对路径跳转（如 ../）。\n` +
+    `17) 若用户为素材设置了代号，可用 {input:alias} 引用该素材。\n` +
+    `18) 可用文件 id 列表：${availableIds}`;
 
   const user = {
     prompt: options.prompt,

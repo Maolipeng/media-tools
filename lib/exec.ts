@@ -70,6 +70,9 @@ function buildCommandError(tool: string, stderr: string, code: number | null) {
     if (message.includes("do not match") && message.includes("size")) {
       return "FFmpeg concat 参数不一致，请统一分辨率/帧率/采样率。";
     }
+    if (message.includes("No such filter")) {
+      return "FFmpeg 滤镜不存在，可能是当前版本未编译该滤镜，请改用 gblur/boxblur 等通用滤镜。";
+    }
     if (message.includes("Error reinitializing filters")) {
       return "FFmpeg 滤镜链配置失败，请检查 concat 前的统一参数设置。";
     }

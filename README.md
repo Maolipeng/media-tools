@@ -39,6 +39,27 @@ Windows（Chocolatey）：
 choco install ffmpeg imagemagick sox
 ```
 
+可选增强（字体与渲染支持，推荐用于艺术字/中文字幕）：
+
+macOS（Homebrew）：
+
+```
+brew install ghostscript
+brew install --cask font-noto-sans-cjk
+```
+
+Ubuntu / Debian：
+
+```
+sudo apt install -y ghostscript fonts-noto-cjk
+```
+
+Windows（Chocolatey）：
+
+```
+choco install ghostscript
+```
+
 ## 快速开始
 
 ```
@@ -117,3 +138,6 @@ docker compose up -d --build
 ```
 
 默认使用 `3000` 端口，并将 `./data` 挂载到容器内的 `/app/data` 以持久化中间态。
+
+Docker 镜像已包含 FFmpeg / ImageMagick / SoX，无需在宿主机单独安装。
+容器内已安装中文字体（Noto Sans SC），用于 FFmpeg drawtext 免乱码。

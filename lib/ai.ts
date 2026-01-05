@@ -44,14 +44,15 @@ export async function callAiForCommand(options: {
     `5) outputExt 必须是合理的扩展名，如 mp4, mp3, wav, png, jpg 等。\n` +
     `6) 只能使用提供的文件 id 或已生成的 step id。\n` +
     `7) 如果需要拼接/合并视频（concat），必须先统一分辨率、像素比例、帧率与音频采样率（例如 scale+pad+fps+setsar+aresample），否则会报错。\n` +
-    `8) 如果需要添加字幕/文字（含中文），优先使用 FFmpeg drawtext 并指定 UTF-8 与字体名称（如 font='PingFang SC' 或 font='Noto Sans CJK SC'），确保不乱码；若使用字幕文件，请加 -sub_charenc UTF-8。\n` +
+    `8) 如果需要添加字幕/文字（含中文），优先使用 FFmpeg drawtext 并指定 UTF-8 与字体名称（如 font='WenQuanYi Zen Hei' 或 font='WenQuanYi Micro Hei' 或 font='Noto Sans CJK SC'），确保不乱码；若使用字幕文件，请加 -sub_charenc UTF-8。\n` +
     `9) 若需要音视频拼接或复杂滤镜，请明确分离视频链与音频链（视频链仅含 scale/pad/fps/setsar，音频链仅含 aresample），concat 使用 [v0][a0][v1][a1] 这类映射，避免将视频滤镜输出接到音频滤镜输入。\n` +
     `10) 若需要设置封面图（attached_pic），请使用额外输入并在输出时 map，不要将封面图加入 filter_complex。\n` +
     `11) 拼接前请统一 SAR（像素比例），视频链中添加 setsar=1，避免 concat 报错。\n` +
     `12) 输出视频请设置像素格式 yuv420p，输出音频优先 AAC 48kHz 立体声。\n` +
-    `13) ImageMagick/SoX 命令也必须使用 {input:...} 与 {output}，不要使用绝对路径或相对路径跳转（如 ../）。\n` +
-    `14) 若用户为素材设置了代号，可用 {input:alias} 引用该素材。\n` +
-    `15) 可用文件 id 列表：${availableIds}`;
+    `13) 避免使用可能缺失的 FFmpeg 滤镜（如 glow），发光效果优先用 drawtext + gblur/boxblur + colorchannelmixer 实现。\n` +
+    `14) ImageMagick/SoX 命令也必须使用 {input:...} 与 {output}，不要使用绝对路径或相对路径跳转（如 ../）。\n` +
+    `15) 若用户为素材设置了代号，可用 {input:alias} 引用该素材。\n` +
+    `16) 可用文件 id 列表：${availableIds}`;
 
   const user = {
     prompt: options.prompt,
